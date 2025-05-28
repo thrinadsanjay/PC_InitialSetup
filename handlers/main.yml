@@ -1,7 +1,9 @@
 ---
 - name: Start and enable libvirtd
   ansible.builtin.systemd:
-    name: libvirtd
+    name: 
+      - libvirtd
+      - virtqemud
     state: started
     enabled: yes
 
@@ -10,3 +12,4 @@
     name: cockpit
     state: started
     enabled: yes
+

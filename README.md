@@ -84,7 +84,7 @@ Create below Playbook in desired location:
   hosts: <host>
   become: true
   roles:
-    - ansible_role-init_setup
+    - thrinadsanjay.ansible_role-init_setup
 ```
 
 Run the following command to execute the playbook:
