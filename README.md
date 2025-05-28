@@ -2,6 +2,12 @@
 
 This project provides an Ansible role and associated playbooks to automate the initial setup of a Linux system, including disk partitioning, LVM setup, network bridge configuration, and installation of virtualization tools. It also supports automated deployment of virtual machines using ISO images.
 
+Use below command to install the role
+
+```
+ansible-galaxy role install thrinadsanjay.init_setup
+```
+
 ## 📁 Project Structure
 
 ```
@@ -35,9 +41,11 @@ init_setup/
 - Ansible 2.10+  
 - Linux host (tested on RHEL-like systems)  
 - `community.general` collection:
+- `ansible.posix` collection:
 
 ```bash
 ansible-galaxy collection install community.general
+ansible-galaxy collection install ansible.posix
 ```
 
 ## 🔧 Role Variables
