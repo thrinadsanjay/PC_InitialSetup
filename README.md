@@ -5,7 +5,7 @@ This project provides an Ansible role and associated playbooks to automate the i
 Use below command to install the role
 
 ```
-ansible-galaxy role install thrinadsanjay.ansible_role.init_setup
+ansible-galaxy role install thrinadsanjay.ansible_role-init_setup
 ```
 
 ## 📁 Project Structure
@@ -84,7 +84,7 @@ Create below Playbook in desired location:
   hosts: <host>
   become: true
   roles:
-    - ansible_role.init_setup
+    - ansible_role-init_setup
 ```
 
 Run the following command to execute the playbook:
