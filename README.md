@@ -4,37 +4,41 @@ This project provides an Ansible role and associated playbooks to automate the i
 
 ## 📁 Project Structure
 
+```
 init_setup/
 ├── defaults/
-│   └── main.yml
-├── files/
+│   └── main.yml           # Default variable values
+├── files/                 # Static files to be copied (optional)
 ├── handlers/
-│   └── main.yml
+│   └── main.yml           # Handlers for tasks (e.g., service restarts)
 ├── meta/
-│   └── main.yml
+│   └── main.yml           # Role metadata, dependencies
 ├── tasks/
-│   └── main.yml
-├── templates/
+│   └── main.yml           # Main list of tasks to execute
+├── templates/             # Jinja2 templates for dynamic configuration
 ├── vars/
-│   └── main.yml
-├── README.md
-
+│   └── main.yml           # Static variables
+├── README.md              # Role documentation
+```
 
 ## 🚀 Features
 
-- Detects and uses available free disk space for partitioning
-- Automatically creates LVM volumes and mounts them
-- Installs essential virtualization packages (`libvirt`, `cockpit`, etc.)
-- Sets up a bridged network interface using the first available Ethernet connection
-- Starts and enables `libvirtd` and `cockpit` services
-- Supports VM deployment using ISO and automated installation config
+- Detects and uses available free disk space for partitioning  
+- Automatically creates LVM volumes and mounts them  
+- Installs essential virtualization packages (`libvirt`, `cockpit`, etc.)  
+- Sets up a bridged network interface using the first available Ethernet connection  
+- Starts and enables `libvirtd` and `cockpit` services  
+- Supports VM deployment using ISO and automated installation config  
 
 ## ✅ Requirements
 
-- Ansible 2.10+
-- Linux host (tested on RHEL-like systems)
+- Ansible 2.10+  
+- Linux host (tested on RHEL-like systems)  
 - `community.general` collection:
 
+```bash
+ansible-galaxy collection install community.general
+```
 
 ## 🔧 Role Variables
 
@@ -44,51 +48,57 @@ You can configure these variables in the playbook or `defaults/main.yml`:
 device: <device name (/dev/sda)>
 
 partitions_required:
-- label: <Mount point label>
-  size_gb: <Desired Size>
-  vg: <Volume Group name>
-  lv: <Logical Volume Name>
-  mount_point: <Mount Point>
+  - label: <Mount point label>
+    size_gb: <Desired Size>
+    vg: <Volume Group name>
+    lv: <Logical Volume Name>
+    mount_point: <Mount Point>
 
 bridge_name: <bridge interface name>
 admin_user: <user name>
 
 required_packages:
-- <List of Required Packages>
+  - <List of Required Packages>
 
 IP_address: <IP Address>
 NetMask: <Netmask>
+```
 
 ## 📦 Usage
 
+Create below Playbook in desired location:
 
-Create below Playbook in desired Location
+`main.yml`
 
-main.yml
----------------------------------------------
-|  ---                                      |
-|  - name: Perform Initial Setup of PC.     |
-|    hosts: <host>                          |   
-|    become: true                           |
-|    roles:                                 |
-|      - init_setup                         |
----------------------------------------------
+```yaml
+---
+- name: Perform Initial Setup of PC.
+  hosts: <host>
+  become: true
+  roles:
+    - init_setup
+```
 
-Run Below command to execute the playbook
+Run the following command to execute the playbook:
 
-# ansible-playbook main.yml
+```bash
+ansible-playbook main.yml
+```
 
 ## 🧠 Notes
-The role is idempotent and skips existing partitions/mounts.
 
-Automatically detects standard Ethernet interfaces (ethernet, 802-3-ethernet).
-
-Bridge configuration avoids using wireless interfaces.
+- The role is idempotent and skips existing partitions/mounts.  
+- Automatically detects standard Ethernet interfaces (`ethernet`, `802-3-ethernet`).  
+- Bridge configuration avoids using wireless interfaces.  
 
 ## 👨‍💻 Contributing
+
 Feel free to fork and contribute via pull requests! Feedback and enhancements welcome.
 
 ## 📄 License
+
 MIT License
+
+---
 
 Let me know if you'd like to include example playbook snippets or add Galaxy publishing instructions.
