@@ -1,0 +1,32 @@
+device: /dev/sda
+partitions_required:
+  - label: lv_iso
+    size_gb: 20
+    vg: system_vg
+    lv: lv_iso
+    mount_point: /ISO
+  - label: lv_libvirt
+    size_gb: 80
+    vg: data_vg
+    lv: lv_libvirt
+    mount_point: /var/lib/libvirt
+  - label: lv_ansible
+    size_gb: 50
+    vg: data_vg
+    lv: lv_ansible
+    mount_point: /Ansible
+bridge_name: br0
+bridge_iface: br0
+admin_user: sanjay
+required_packages:
+  - git
+  - podman
+  - qemu-kvm
+  - libvirt
+  - virt-viewer
+  - cockpit
+  - cockpit-machines 
+  - NetworkManager
+  - vim
+IP_address: 192.168.0.20
+NetMask: 24

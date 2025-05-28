@@ -1,0 +1,224 @@
+# This playbook sets up disk partitions, LVM, and network bridge on a Linux system.
+---
+- name: Check if mount points already exist
+  stat:
+    path: "{{ item.mount_point }}"
+  loop: "{{ partitions_required }}"
+  register: mount_point_stats
+
+- name: Set flag if all mount points exist
+  set_fact:
+    all_mounts_exist: "{{ mount_point_stats.results | map(attribute='stat.exists') | list | min }}"
+
+- name: Skip partitioning if all mount points already exist
+  debug:
+    msg: "All mount points already exist. Skipping partitioning and LVM setup."
+  when: all_mounts_exist
+  tags: skip_partitioning
+
+- block:
+    - name: Get parted JSON data for {{ device }}
+      command: "parted -s {{ device }} unit GiB print free --json"
+      register: parted_info
+      changed_when: false
+
+    - name: Parse JSON output from parted
+      set_fact:
+        parted_data: "{{ parted_info.stdout | from_json }}"
+
+    - name: Find free partitions
+      set_fact:
+        free_partitions: "{{ parted_data.disk.partitions | selectattr('type', 'equalto', 'free') | list }}"
+
+    - name: Fail if no free space found
+      fail:
+        msg: "No free space available on {{ device }} for partitioning."
+      when: free_partitions | length == 0
+
+    - name: Determine largest free region
+      set_fact:
+        usable_free: "{{ free_partitions | sort(attribute='size', reverse=true) | first }}"
+        usable_start: "{{ (usable_free.start | regex_replace('GiB', '') ) | float }}"
+        usable_size: "{{ (usable_free.size | regex_replace('GiB', '') ) | float }}"
+
+    - name: Validate if total space is sufficient
+      fail:
+        msg: "Not enough free disk space. Required: {{ partitions_required | map(attribute='size_gb') | sum }} GiB, Available: {{ usable_size }} GiB"
+      when: usable_size < (partitions_required | map(attribute='size_gb') | sum)
+
+    - name: Set start partition number dynamically
+      command: "lsblk -nr -o NAME {{ device }}"
+      register: blk_output
+      changed_when: false
+
+    - name: Extract current partition numbers
+      set_fact:
+        existing_parts: >-
+          {{ blk_output.stdout_lines
+            | map('regex_search', '^sda(\\d+)$')
+            | select('string') | map('int') | list }}
+        start_partition_number: "{{ (existing_parts | default([0]) | max) + 1 }}"
+
+    - name: Calculate dynamic partition plan
+      set_fact:
+        partition_plan: >-
+          {% set base = usable_start %}
+          {% set pn = start_partition_number %}
+          {% set result = [] %}
+          {% for p in partitions_required %}
+          {% set start = base %}
+          {% set end = base + p.size_gb %}
+          {% set part = {
+            'number': pn,
+            'start': start|string + 'GiB',
+            'end': end|string + 'GiB',
+            'label': p.label,
+            'vg': p.vg,
+            'lv': p.lv,
+            'size': p.size_gb|string + 'G',
+            'mount_point': p.mount_point
+          } %}
+          {% set _ = result.append(part) %}
+          {% set base = end %}
+          {% set pn = pn + 1 %}
+          {% endfor %}
+          {{ result }}
+
+    - name: Skip partitioning if all mount points already exist
+      stat:
+        path: "{{ item.mount_point }}"
+      loop: "{{ partition_plan }}"
+      register: mount_checks
+
+    - name: Filter out already mounted paths
+      set_fact:
+        partition_plan: "{{ partition_plan | zip(mount_checks.results) | rejectattr('1.stat.exists') | map(attribute='0') | list }}"
+
+    - name: Create partitions
+      community.general.parted:
+        device: "{{ device }}"
+        number: "{{ item.number }}"
+        part_start: "{{ item.start }}"
+        part_end: "{{ item.end }}"
+        flags: [ lvm ]
+        state: present
+      loop: "{{ partition_plan }}"
+
+    - name: Create volume groups
+      community.general.lvg:
+        vg: "{{ item.vg }}"
+        pvs: "{{ device }}{{ item.number }}"
+        state: present
+      loop: "{{ partition_plan }}"
+
+    - name: Create logical volumes
+      community.general.lvol:
+        vg: "{{ item.vg }}"
+        lv: "{{ item.lv }}"
+        size: "{{ item.size }}"
+        state: present
+      loop: "{{ partition_plan }}"
+
+    - name: Format logical volumes
+      filesystem:
+        fstype: xfs
+        dev: "/dev/mapper/{{ item.vg }}-{{ item.lv }}"
+      loop: "{{ partition_plan }}"
+
+    - name: Create mount directories
+      file:
+        path: "{{ item.mount_point }}"
+        state: directory
+        mode: '0755'
+      loop: "{{ partition_plan }}"
+
+    - name: Mount volumes and add to fstab
+      mount:
+        path: "{{ item.mount_point }}"
+        src: "/dev/mapper/{{ item.vg }}-{{ item.lv }}"
+        fstype: xfs
+        opts: defaults
+        state: mounted
+      loop: "{{ partition_plan }}"
+
+    - name: Install ACL if missing
+      package:
+        name: acl
+        state: present
+
+    - name: Set ACL for {{ admin_user }}
+      acl:
+        path: "{{ item.mount_point }}"
+        entity: "{{ admin_user }}"
+        etype: user
+        permissions: rwx
+        state: present
+      loop: "{{ partition_plan }}"
+
+  when: not all_mounts_exist
+
+- name: Install required software
+  package:
+    name: "{{ required_packages }}"
+    state: present
+  notify:
+    - Start and enable libvirtd
+    - Start and enable cockpit
+
+- name: Get all NetworkManager connections of type Ethernet
+  command: nmcli -t -f DEVICE,TYPE device
+  register: nmcli_conns
+  changed_when: false
+
+- name: Extract Ethernet connection names
+  set_fact:
+    ethernet_conns: >-
+      {{ nmcli_conns.stdout_lines
+        | select("search", ":ethernet$")
+        | map("regex_replace", ":(ethernet)$", "")
+        | list }}
+
+- name: Pick first Ethernet connection name
+  set_fact:
+    eth_conn_name: "{{ ethernet_conns[0] if ethernet_conns|length > 0 else '' }}"
+
+- name: Get interface device associated with Ethernet connection
+  command: nmcli -g GENERAL.DEVICES con show "{{ eth_conn_name }}"
+  register: eth_iface
+  when: eth_conn_name != ''
+  changed_when: false
+
+- name: Set ethernet interface fact
+  set_fact:
+    eth_interface: "{{ eth_iface.stdout }}"
+  when: eth_conn_name != ''
+
+- name: Fail if no Ethernet interface found
+  fail:
+    msg: "No Ethernet connection found on this system."
+  when: eth_conn_name == '' or eth_interface == ''
+
+- name: Create bridge interface {{ bridge_name }}
+  community.general.nmcli:
+    conn_name: "{{ bridge_name }}"
+    type: bridge
+    state: present
+    ip4: "{{ IP_address }}/{{ NetMask }}"
+    autoconnect: yes
+
+- name: Create Ethernet slave connection to bridge
+  community.general.nmcli:
+    conn_name: "br-slave-{{ eth_interface }}"
+    type: bridge-slave
+    ifname: "{{ eth_interface }}"
+    master: "{{ bridge_name }}"
+    slave_type: bridge
+    state: present
+    autoconnect: yes
+
+- name: Bring up bridge
+  command: "nmcli connection up {{ bridge_name }}"
+
+- name: Bring up slave connection
+  command: "nmcli connection up br-slave-{{ eth_interface }}"
+  

@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  author: Sanjay Chintakayala
+  description: Initial setup for a PC with partitions, LVM, ACLs, bridge setup
+  company: Sanjay's Test Lab
+  license: MIT
+  min_ansible_version: 2.11
+  
+  platforms:
+    - name: EL
+      versions:
+        - 8 
+        - 9
+        - 10
+dependencies: []
