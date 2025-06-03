@@ -1,0 +1,56 @@
+- name: Get all NetworkManager connections of type Ethernet
+  command: nmcli -t -f DEVICE,TYPE device
+  register: nmcli_conns
+  changed_when: false
+
+- name: Extract Ethernet connection names
+  set_fact:
+    ethernet_conns: >-
+      {{ nmcli_conns.stdout_lines
+        | select("search", ":ethernet$")
+        | map("regex_replace", ":(ethernet)$", "")
+        | list }}
+
+- name: Pick first Ethernet connection name
+  set_fact:
+    eth_conn_name: "{{ ethernet_conns[0] if ethernet_conns|length > 0 else '' }}"
+
+- name: Get interface device associated with Ethernet connection
+  command: nmcli -g GENERAL.DEVICES con show "{{ eth_conn_name }}"
+  register: eth_iface
+  when: eth_conn_name != ''
+  changed_when: false
+
+- name: Set ethernet interface fact
+  set_fact:
+    eth_interface: "{{ eth_iface.stdout }}"
+  when: eth_conn_name != ''
+
+- name: Fail if no Ethernet interface found
+  fail:
+    msg: "No Ethernet connection found on this system."
+  when: eth_conn_name == '' or eth_interface == ''
+
+- name: Create bridge interface {{ bridge_name }}
+  community.general.nmcli:
+    conn_name: "{{ bridge_name }}"
+    type: bridge
+    state: present
+    ip4: "{{ IP_address }}/{{ NetMask }}"
+    autoconnect: yes
+
+- name: Create Ethernet slave connection to bridge
+  community.general.nmcli:
+    conn_name: "br-slave-{{ eth_interface }}"
+    type: bridge-slave
+    ifname: "{{ eth_interface }}"
+    master: "{{ bridge_name }}"
+    slave_type: bridge
+    state: present
+    autoconnect: yes
+
+- name: Bring up bridge
+  command: "nmcli connection up {{ bridge_name }}"
+
+- name: Bring up slave connection
+  command: "nmcli connection up br-slave-{{ eth_interface }}"

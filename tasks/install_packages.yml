@@ -1,0 +1,7 @@
+- name: Install required software
+  package:
+    name: "{{ required_packages }}"
+    state: present
+  notify:
+    - Start and enable libvirtd
+    - Start and enable cockpit

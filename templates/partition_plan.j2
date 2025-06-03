@@ -1,0 +1,55 @@
+{% set ns = namespace(
+  result=[],
+  lvm_volumes=[],
+  base=(usable_start | float),
+  current_number=start_partition_number | int
+) %}
+
+{# Step 1: Group by VG #}
+{% set grouped = {} %}
+{% for p in partitions_required_filtered %}
+
+  {% set _ = grouped.update({p.vg: (grouped[p.vg] if grouped[p.vg] is defined else []) + [p]}) %}
+
+{% endfor %}
+
+{# Step 2: Sort VG names alphabetically #}
+{% for vg_name in grouped.keys() | sort %}
+  {% set lv_list = grouped[vg_name] %}
+  {% set total_vg_size = lv_list | sum(attribute='size_gb') %}
+  {# set total_vg_size_aligned = (total_vg_size | float | round(0, 'ceil')) #}
+  {% set start = ns.base + 1 %}
+  {% set end = ns.base + total_vg_size %}
+
+  {# Create partition plan #}  
+  
+    {% set part = {
+      'number': ns.current_number,
+      'start': start ~ 'GiB',
+      'end': end ~ 'GiB',
+      'vg': vg_name
+    } %}
+    {% set _ = ns.result.append(part) %}
+
+    {# Create lvm_volume entry #}
+    {% for lv in lv_list %}
+
+        {% set lvm_entry = {  
+          'lv': lv.lv,
+          'vg': lv.vg,
+          'size': (lv.size_gb - 5)|round(1, 'floor') ~ 'G',
+          'mount_point': lv.mount_point
+        } %}
+      {% set _ = ns.lvm_volumes.append(lvm_entry) %}
+
+  {% endfor %}
+  
+  {% set ns.current_number = ns.current_number + 1 %}
+  {% set ns.base = end %}
+{% endfor %}
+
+{# Output the results #}
+{
+  "partitions": {{ ns.result | to_json }},
+  "lvm_volumes": {{ ns.lvm_volumes | to_json}}
+}

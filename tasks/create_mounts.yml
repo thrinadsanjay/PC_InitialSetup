@@ -1,0 +1,199 @@
+- name: List available mount points
+  setup:
+    filter: ansible_mounts
+
+- name: Set list of available mount points
+  set_fact:
+    mounted_paths: "{{ ansible_mounts | map(attribute='mount') | list }}"
+
+- name: Set list of required mount points
+  set_fact:
+    required_mounts: "{{ partitions_required | map(attribute='mount_point') | list }}"
+
+- name: Identify missing mount points
+  set_fact:
+    missing_mounts: "{{ required_mounts | difference(mounted_paths) }}"
+
+- name: Print status
+  debug:
+    var: missing_mounts
+
+- name: Skip partitioning if all mount points already exist
+  debug:
+    msg: "All mount points already exist. Skipping partitioning and LVM setup."
+  when: missing_mounts | length == 0
+  tags: skip_partitioning
+
+- block:
+    - name: Gather existing VG's
+      command: vgs --noheadings -o vg_name
+      register: existing_vgs_raw
+      changed_when: false
+
+    - name: Set existing vg list
+      set_fact:
+        existing_vgs: "{{ existing_vgs_raw.stdout_lines | map('trim') | list }}"
+
+    - name: Gather existing LV'selectattr
+      command: lvs --noheadings -o lv_name,vg_name,size --separator ','
+      register: existing_lvs_raw
+      changed_when: false
+
+    - name: Set existing LV list
+      set_fact:
+        existing_lvs: >-
+          {{
+            existing_lvs_raw.stdout_lines
+            | map('trim')
+            | map('split', ',')
+            | map ('list')
+            | list
+          }}
+
+    - name: Save available VG's and LV's
+      set_fact:
+        available_vgs: "{{ existing_vgs }}"
+        available_lvs: "{{ existing_lvs | map(attribute=0) | list }}"
+
+    - name: Filter out existing LV's
+      set_fact:
+        partitions_required_filtered: >-
+          {{
+            partitions_required
+            | rejectattr('lv', 'in', available_lvs )
+            | list
+          }}
+    
+    - name: Get parted JSON data for {{ device }}
+      command: "parted -s {{ device }} unit KiB print free --json"
+      register: parted_info
+      changed_when: false
+
+    - name: Parse JSON output from parted
+      set_fact:
+        parted_data: "{{ parted_info.stdout | from_json }}"
+
+    - name: Find free partitions
+      set_fact:
+        free_partitions: "{{ parted_data.disk.partitions | selectattr('type', 'equalto', 'free') | list }}"
+
+    - name: Identify the Free Usable space
+      set_fact:
+        usable_free: "{{ free_partitions | sort(attribute='size', reverse=true) | first }}"
+
+    - name: Fail if no free space found
+      fail:
+        msg: "No free space available on {{ device }} for partitioning."
+      when: free_partitions | length == 0
+
+    - name: Determine largest free region
+      set_fact:
+        usable_start: "{{ ((usable_free.start | regex_replace('kiB', '')) | float) / 1024 / 1024 }}"
+        usable_size: "{{ ((usable_free.size | regex_replace('kiB', '')) | float) / 1024 / 1024 }}"
+
+    - name: Print Usable Start and Size 
+      debug:
+        msg: "Available Space : {{ usable_size }} GiB | Required Space: {{ partitions_required_filtered | map(attribute='size_gb') | sum}} GiB"
+
+    - name: Validate if total space is sufficient
+      fail:
+        msg: "Not enough free disk space. Required: {{ partitions_required_filtered | map(attribute='size_gb') | sum }} GiB, Available: {{ usable_size }} GiB"
+      when: usable_size | int < (partitions_required_filtered | map(attribute='size_gb') | sum)
+
+    - name: Set start partition number dynamically
+      shell: "lsblk {{ device }} | awk '/part/ { match($1, /[0-9]+$/, a); print a[0] }' | tail -1"
+      register: last_partition_number
+      changed_when: false
+
+    - name: Determine start partition number
+      set_fact:
+        start_partition_number: "{{ (last_partition_number.stdout | default('0') | int) + 1 }}"
+
+    - name: Calculate dynamic partition plan
+      set_fact:
+        partition_plan: "{{ lookup('template', 'partition_plan.j2') | from_yaml }}"
+
+    - name: Set disk_partition and lvm_volume data seperately
+      set_fact:
+        partitions: "{{ partition_plan.partitions }}"
+        lvm_volumes: "{{ partition_plan.lvm_volumes }}"
+
+    - name: Debug partition info
+      debug:
+        msg: "Partitions: {{ partitions }}"
+
+    - name: Skip partitioning if VG's already exist
+      stat:
+        path: "{{ item.vg }}"
+      loop: "{{ partitions }}"
+      register: vg_checks
+
+    - name: Filter out already mounted paths
+      set_fact:
+        partition_plan: "{{ partitions | zip(vg_checks.results) | rejectattr('1.stat.exists') | map(attribute='0') | list }}"
+
+    - name: Create partitions
+      community.general.parted:
+        device: "{{ device }}"
+        number: "{{ item.number }}"
+        part_start: "{{ item.start }}"
+        part_end: "{{ item.end }}"
+        label: gpt
+        flags: [ lvm ]
+        state: present
+      loop: "{{ partitions }}"
+      #loop_control:
+      #  label: "Partition {{ item.number }}"
+
+    - name: Create volume groups
+      community.general.lvg:
+        vg: "{{ item.vg }}"
+        pvs: "{{ device }}{{ item.number }}"
+        state: present
+      loop: "{{ partitions }}"
+
+    - name: Create logical volumes
+      community.general.lvol:
+        lv: "{{ item.lv }}"
+        vg: "{{ item.vg }}"
+        size: "{{ item.size }}"
+        state: present
+      loop: "{{ lvm_volumes }}"
+
+    - name: Format logical volumes
+      filesystem:
+        fstype: xfs
+        dev: "/dev/mapper/{{ item.vg }}-{{ item.lv }}"
+      loop: "{{ lvm_volumes }}"
+
+    - name: Create mount directories
+      file:
+        path: "{{ item.mount_point }}"
+        state: directory
+        mode: '0755'
+      loop: "{{ lvm_volumes }}"
+
+    - name: Mount volumes and add to fstab
+      mount:
+        path: "{{ item.mount_point }}"
+        src: "/dev/mapper/{{ item.vg }}-{{ item.lv }}"
+        fstype: xfs
+        opts: defaults
+        state: mounted
+      loop: "{{ lvm_volumes }}"
+
+    - name: Install ACL if missing
+      package:
+        name: acl
+        state: present
+
+    - name: Set ACL for {{ admin_user }}
+      acl:
+        path: "{{ item.mount_point }}"
+        entity: "{{ admin_user }}"
+        etype: user
+        permissions: rwx
+        state: present
+      loop: "{{ lvm_volumes }}"
+
+  when: missing_mounts | length > 0

@@ -1,0 +1,8 @@
+{# extract_partition_numbers.j2 #}
+{%- set disk_name = disk_device | basename -%}
+{%- set parts = lsblk_output.stdout_lines
+    | select('match', disk_name ~ '\\d+$')
+    | map('regex_replace', '^' ~ disk_name ~ '(\\d+)$', '\\1')
+    | map('int')
+    | list -%}
+{{ parts | max if parts else 0 }}

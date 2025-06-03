@@ -1,0 +1,18 @@
+---
+- name: Deploy Jenkins Container
+  community.docker.docker_compose_v2:
+    project_name: sanjaylab
+    defination:
+      services:
+        jenkins:
+          container_name: Jenkins_Master
+          image: jenkins/jenkins:lts-jdk17
+          restart: on-failure
+          volumes:
+            - jenkins:/var/jenkins_home
+          ports:
+            - "8000:8000"
+            - "50000:50000"
+
+      volume:
+        jenkins_home:
