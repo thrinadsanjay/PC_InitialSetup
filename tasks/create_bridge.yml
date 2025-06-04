@@ -3,39 +3,40 @@
   register: nmcli_conns
   changed_when: false
 
-- name: Print connections
-  debug:
-    var: nmcli_conns
+- name: Check if bridge already exists
+  command: nmcli -t -f NAME,TYPE con show
+  register: nmcli_all_conns
+  changed_when: false
+
+- name: Extract Ethernet connection names
+  set_fact:
+    ethernet_conns: >-
+      {{ nmcli_conns.stdout_lines
+        | select("search", ":ethernet$")
+        | map("regex_replace", ":(ethernet)$", "")
+        | list }}
+
+- name: Pick first Ethernet connection name
+  set_fact:
+    eth_conn_name: "{{ ethernet_conns[0] if ethernet_conns|length > 0 else '' }}"
+
+- name: Get interface device associated with Ethernet connection
+  command: nmcli -g GENERAL.DEVICES con show "{{ eth_conn_name }}"
+  register: eth_iface
+  when: eth_conn_name != ''
+  changed_when: false
+
+- name: Set ethernet interface fact
+  set_fact:
+    eth_interface: "{{ eth_iface.stdout }}"
+  when: eth_conn_name != ''
+
+- name: Fail if no Ethernet interface found
+  fail:
+    msg: "No Ethernet connection found on this system."
+  when: eth_conn_name == '' or eth_interface == ''
 
 - block:
-    - name: Extract Ethernet connection names
-      set_fact:
-        ethernet_conns: >-
-          {{ nmcli_conns.stdout_lines
-            | select("search", ":ethernet$")
-            | map("regex_replace", ":(ethernet)$", "")
-            | list }}
-
-    - name: Pick first Ethernet connection name
-      set_fact:
-        eth_conn_name: "{{ ethernet_conns[0] if ethernet_conns|length > 0 else '' }}"
-
-    - name: Get interface device associated with Ethernet connection
-      command: nmcli -g GENERAL.DEVICES con show "{{ eth_conn_name }}"
-      register: eth_iface
-      when: eth_conn_name != ''
-      changed_when: false
-
-    - name: Set ethernet interface fact
-      set_fact:
-        eth_interface: "{{ eth_iface.stdout }}"
-      when: eth_conn_name != ''
-
-    - name: Fail if no Ethernet interface found
-      fail:
-        msg: "No Ethernet connection found on this system."
-      when: eth_conn_name == '' or eth_interface == ''
-
     - name: Create bridge interface {{ bridge_name }}
       community.general.nmcli:
         conn_name: "{{ bridge_name }}"
@@ -59,5 +60,11 @@
 
     - name: Bring up slave connection
       command: "nmcli connection up br-slave-{{ eth_interface }}"
-    
-  when: "'{{ bridge_name }}' in nmcli_conns.stdout_lines"
+
+  when: bridge_name not in (
+          nmcli_all_conns.stdout_lines
+          | map('split', ':')
+          | selectattr('1', 'equalto', 'bridge')
+          | map('first')
+          | list
+        )
