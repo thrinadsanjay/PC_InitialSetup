@@ -3,7 +3,7 @@
   register: nmcli_conns
   changed_when: false
 
-- name: Check if bridge already exists
+- name: Get all connections to identify existing bridges
   command: nmcli -t -f NAME,TYPE con show
   register: nmcli_all_conns
   changed_when: false
@@ -12,13 +12,13 @@
   set_fact:
     ethernet_conns: >-
       {{ nmcli_conns.stdout_lines
-        | select("search", ":ethernet$")
-        | map("regex_replace", ":(ethernet)$", "")
-        | list }}
+         | select("search", ":ethernet$")
+         | map("regex_replace", ":(ethernet)$", "")
+         | list }}
 
 - name: Pick first Ethernet connection name
   set_fact:
-    eth_conn_name: "{{ ethernet_conns[0] if ethernet_conns|length > 0 else '' }}"
+    eth_conn_name: "{{ ethernet_conns[0] if ethernet_conns | length > 0 else '' }}"
 
 - name: Get interface device associated with Ethernet connection
   command: nmcli -g GENERAL.DEVICES con show "{{ eth_conn_name }}"
@@ -31,12 +31,27 @@
     eth_interface: "{{ eth_iface.stdout }}"
   when: eth_conn_name != ''
 
-- name: Fail if no Ethernet interface found
-  fail:
-    msg: "No Ethernet connection found on this system."
-  when: eth_conn_name == '' or eth_interface == ''
+- name: Extract existing bridge names
+  set_fact:
+    existing_bridges: >-
+      {{
+        nmcli_all_conns.stdout_lines
+        | map('split', ':')
+        | selectattr('1', 'equalto', 'bridge')
+        | map('first')
+        | list
+      }}
+
+- name: Print existing bridge connections
+  debug:
+    var: existing_bridges
 
 - block:
+    - name: Fail if no Ethernet interface found (and bridge doesn't exist)
+      fail:
+        msg: "No Ethernet connection found, and bridge creation is needed."
+      when: eth_conn_name == '' or eth_interface == ''
+
     - name: Create bridge interface {{ bridge_name }}
       community.general.nmcli:
         conn_name: "{{ bridge_name }}"
@@ -61,10 +76,4 @@
     - name: Bring up slave connection
       command: "nmcli connection up br-slave-{{ eth_interface }}"
 
-  when: bridge_name not in (
-          nmcli_all_conns.stdout_lines
-          | map('split', ':')
-          | selectattr('1', 'equalto', 'bridge')
-          | map('first')
-          | list
-        )
+  when: bridge_name not in existing_bridges
