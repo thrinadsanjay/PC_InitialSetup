@@ -1,0 +1,77 @@
+---
+# - name: Enable Docker repository
+#   become: true
+#   command: dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
+#   args:
+#       creates: /etc/yum.repos.d/docker-ce.repo
+
+- name: Add Docker YUM repository (force releasever=9 for RHEL 10)
+  ansible.builtin.yum_repository:
+    name: docker-ce-stable
+    description: Docker CE Stable - $basearch
+    baseurl: https://download.docker.com/linux/rhel/9/$basearch/stable
+    enabled: yes
+    gpgcheck: yes
+    gpgkey: https://download.docker.com/linux/rhel/gpg
+
+
+- name: Ensure Docker is installed
+  become: true
+  package:
+    name: 
+      - docker-ce
+      - docker-ce-cli 
+      - containerd.io 
+      - docker-buildx-plugin
+      - docker-compose-plugin
+      - python3-pip
+    state: present
+
+- name: Start Docker service
+  become: true
+  service:
+    name: docker
+    state: started
+    enabled: yes
+
+# - name: Install Python docker module
+#   pip:
+#     name: 
+#       - docker
+#       - docker-compose
+#     state: present
+
+- name: Add user to docker gorup
+  become: true
+  user:
+    name: "{{ admin_user }}"
+    groups: docker
+    append: yes
+    
+- name: Deploy Jenkins Container
+  community.docker.docker_compose_v2:
+    project_name: sanjaylab
+    definition:
+      services:
+        jenkins:
+          container_name: Jenkins_Master
+          image: jenkins/jenkins:lts-jdk17
+          restart: on-failure
+          volumes:
+            - jenkins_home:/var/jenkins_home
+          ports:
+            - "8000:8000"
+            - "50000:50000"
+      volumes:
+        jenkins_home: {}
+
+- name: Get Jenkins Initial Password
+  community.docker.docker_container_exec:
+    container: Jenkins_Master
+    command: cat /var/jenkins_home/secrets/initialAdminPassword
+  register: Jenkins_init_pwd
+  changed_when: false
+
+- name: Print Jenkins initial Password
+  debug:
+    var: Jenkins_init_pwd.stdout

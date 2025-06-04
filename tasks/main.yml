@@ -7,4 +7,4 @@
     include_tasks: install_packages.yml
   - name: Deploy Jenkins
     when: "{{ Jenkins }} == true"
-    include_tasks: podman.yml
+    include_tasks: docker.yml
